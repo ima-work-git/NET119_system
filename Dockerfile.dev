@@ -1,0 +1,24 @@
+# NET119 相互接続システム - 開発用 Docker イメージ
+# TLSなし、デバッグ有効
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 依存関係インストール
+COPY package*.json ./
+RUN npm ci
+
+# ソースコピーとビルド
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# ポート公開
+EXPOSE 61614 8443
+
+# 開発用設定
+ENV NODE_ENV=development
+ENV DISABLE_TLS=true
+
+CMD ["node", "dist/stomp-broker.js"]

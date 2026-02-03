@@ -1,0 +1,94 @@
+# NET119 相互接続システム - Docker Compose設定
+# OCI Always Free 対応（メモリ1GB想定）
+
+version: '3.8'
+
+services:
+  # STOMPブローカー
+  stomp-broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: net119-stomp-broker:latest
+    container_name: net119-stomp-broker
+    restart: unless-stopped
+    ports:
+      - "61614:61614"
+    volumes:
+      - ./certs:/etc/net119/certs:ro
+    environment:
+      - STOMP_PORT=61614
+      - TLS_CERT_PATH=/etc/net119/certs/fullchain.pem
+      - TLS_KEY_PATH=/etc/net119/certs/privkey.pem
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_JSON=true
+      - OPERATORS_CONFIG=${OPERATORS_CONFIG:-}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(61614, 'localhost').on('error', () => process.exit(1)).end()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Callee Gateway（指令センター向け）
+  callee-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: net119-callee-gateway:latest
+    container_name: net119-callee-gateway
+    command: ["node", "dist/callee-gateway.js"]
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/etc/net119/certs:ro
+    environment:
+      - OPERATOR_CODE=${OPERATOR_CODE:-tokyo}
+      - BROKER_HOST=stomp-broker
+      - BROKER_PORT=61614
+      - WSS_PORT=443
+      - TLS_CERT_PATH=/etc/net119/certs/fullchain.pem
+      - TLS_KEY_PATH=/etc/net119/certs/privkey.pem
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_JSON=true
+    depends_on:
+      stomp-broker:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(443, 'localhost').on('error', () => process.exit(1)).end()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ネットワーク
+networks:
+  default:
+    name: net119-network
+    driver: bridge
+
+# ボリューム（オプション：永続化が必要な場合）
+volumes:
+  certs:
+    driver: local

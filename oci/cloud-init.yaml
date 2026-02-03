@@ -1,0 +1,136 @@
+#cloud-config
+# NET119 相互接続システム - Cloud-Init設定
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - docker
+  - docker-compose
+  - certbot
+  - firewalld
+
+write_files:
+  - path: /etc/net119/config.env
+    permissions: '0600'
+    content: |
+      OPERATOR_CODE=${operator_code}
+      STOMP_PORT=61614
+      WSS_PORT=443
+      TLS_CERT_PATH=/etc/net119/certs/fullchain.pem
+      TLS_KEY_PATH=/etc/net119/certs/privkey.pem
+      LOG_LEVEL=info
+      LOG_JSON=true
+      DISABLE_TLS=false
+
+  - path: /etc/systemd/system/net119.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=NET119 Interconnect System
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=10
+      WorkingDirectory=/opt/net119
+      ExecStart=/usr/bin/docker-compose up
+      ExecStop=/usr/bin/docker-compose down
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /opt/net119/setup-certs.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Let's Encrypt証明書取得スクリプト
+
+      DOMAIN=$1
+      EMAIL=$2
+
+      if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+        echo "Usage: $0 <domain> <email>"
+        exit 1
+      fi
+
+      # certbot実行
+      certbot certonly --standalone \
+        -d "$DOMAIN" \
+        --email "$EMAIL" \
+        --agree-tos \
+        --non-interactive \
+        --http-01-port 80
+
+      # 証明書をnet119用ディレクトリにコピー
+      mkdir -p /etc/net119/certs
+      cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/net119/certs/
+      cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /etc/net119/certs/
+      chmod 600 /etc/net119/certs/*.pem
+
+      echo "Certificates installed successfully"
+
+  - path: /opt/net119/setup-self-signed.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # 自己署名証明書生成スクリプト（開発・テスト用）
+
+      DOMAIN=${1:-localhost}
+      CERT_DIR=/etc/net119/certs
+
+      mkdir -p $CERT_DIR
+
+      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout $CERT_DIR/privkey.pem \
+        -out $CERT_DIR/fullchain.pem \
+        -subj "/CN=$DOMAIN" \
+        -addext "subjectAltName=DNS:$DOMAIN,IP:$(curl -s ifconfig.me)"
+
+      chmod 600 $CERT_DIR/*.pem
+
+      echo "Self-signed certificates created"
+
+runcmd:
+  # ファイアウォール設定
+  - systemctl enable firewalld
+  - systemctl start firewalld
+  - firewall-cmd --permanent --add-port=22/tcp
+  - firewall-cmd --permanent --add-port=80/tcp
+  - firewall-cmd --permanent --add-port=443/tcp
+  - firewall-cmd --permanent --add-port=61614/tcp
+  - firewall-cmd --reload
+
+  # Docker設定
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker opc
+
+  # NET119ディレクトリ作成
+  - mkdir -p /opt/net119
+  - mkdir -p /etc/net119/certs
+
+  # 自己署名証明書生成（初期セットアップ用）
+  - /opt/net119/setup-self-signed.sh $(curl -s ifconfig.me)
+
+  # サービス登録（手動起動）
+  - systemctl daemon-reload
+  - systemctl enable net119
+
+final_message: |
+  NET119 server initialized.
+
+  Next steps:
+  1. Clone the repository: cd /opt/net119 && git clone <repo>
+  2. Set up certificates:
+     - For production: /opt/net119/setup-certs.sh <domain> <email>
+     - For testing: already done with self-signed cert
+  3. Configure /etc/net119/config.env
+  4. Start service: systemctl start net119
+
+  Fixed IP: $(curl -s ifconfig.me)
+  STOMP endpoint: <ip>:61614
+  WSS endpoint: wss://<ip>:443/ws/terminal

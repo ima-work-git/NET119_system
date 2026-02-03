@@ -1,0 +1,74 @@
+# NET119 相互接続システム - 開発用 Docker Compose設定
+# TLSなし、ローカル開発向け
+
+version: '3.8'
+
+services:
+  # STOMPブローカー（TLSなし）
+  stomp-broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: net119-stomp-broker:dev
+    container_name: net119-stomp-broker-dev
+    restart: unless-stopped
+    ports:
+      - "61614:61614"
+    environment:
+      - STOMP_PORT=61614
+      - DISABLE_TLS=true
+      - LOG_LEVEL=debug
+      - LOG_JSON=false
+      - OPERATORS_CONFIG=[{"code":"tokyo","name":"東京消防庁","allowedIPs":["0.0.0.0/0"]},{"code":"osaka","name":"大阪市消防局","allowedIPs":["0.0.0.0/0"]}]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(61614, 'localhost').on('error', () => process.exit(1)).end()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Caller Gateway（テスト用）
+  caller-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: net119-caller-gateway:dev
+    container_name: net119-caller-gateway-dev
+    command: ["node", "dist/caller-gateway.js"]
+    restart: unless-stopped
+    environment:
+      - OPERATOR_CODE=tokyo
+      - BROKER_HOST=stomp-broker
+      - BROKER_PORT=61614
+      - LOG_LEVEL=debug
+      - LOG_JSON=false
+    depends_on:
+      stomp-broker:
+        condition: service_healthy
+
+  # Callee Gateway（テスト用、TLSなしWebSocket）
+  callee-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: net119-callee-gateway:dev
+    container_name: net119-callee-gateway-dev
+    command: ["node", "dist/callee-gateway.js"]
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      - OPERATOR_CODE=osaka
+      - BROKER_HOST=stomp-broker
+      - BROKER_PORT=61614
+      - WSS_PORT=8443
+      - DISABLE_TLS=true
+      - LOG_LEVEL=debug
+      - LOG_JSON=false
+    depends_on:
+      stomp-broker:
+        condition: service_healthy
+
+networks:
+  default:
+    name: net119-network-dev
+    driver: bridge
