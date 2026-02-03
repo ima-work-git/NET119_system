@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NET119 指令台 - 消防指令センター</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', Meiryo, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+
+    /* ヘッダー */
+    .header {
+      background: linear-gradient(135deg, #d32f2f, #b71c1c);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header h1::before {
+      content: '🚒';
+      font-size: 28px;
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 20px;
+      font-size: 14px;
+    }
+
+    .connection-badge .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4caf50;
+      animation: pulse 1.5s infinite;
+    }
+
+    .connection-badge.disconnected .dot {
+      background: #f44336;
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .datetime {
+      font-size: 18px;
+      font-family: monospace;
+    }
+
+    /* メインレイアウト */
+    .main-container {
+      display: grid;
+      grid-template-columns: 350px 1fr 400px;
+      height: calc(100vh - 60px);
+    }
+
+    /* 通報一覧パネル */
+    .incidents-panel {
+      background: #16213e;
+      border-right: 1px solid #0f3460;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      padding: 16px;
+      background: #0f3460;
+      font-weight: bold;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .badge {
+      background: #d32f2f;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .incidents-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .incident-card {
+      padding: 16px;
+      border-bottom: 1px solid #0f3460;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .incident-card:hover {
+      background: #1f4068;
+    }
+
+    .incident-card.active {
+      background: #1f4068;
+      border-left: 4px solid #d32f2f;
+    }
+
+    .incident-card.new {
+      animation: newIncident 1s infinite;
+    }
+
+    @keyframes newIncident {
+      0%, 100% { background: #16213e; }
+      50% { background: #4a1010; }
+    }
+
+    .incident-type {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .incident-type.fire {
+      background: #ff5722;
+    }
+
+    .incident-type.rescue {
+      background: #2196f3;
+    }
+
+    .incident-name {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .incident-address {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 6px;
+    }
+
+    .incident-time {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .incident-status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-left: 8px;
+    }
+
+    .incident-status.waiting { background: #ff9800; color: #000; }
+    .incident-status.responding { background: #4caf50; }
+    .incident-status.dispatched { background: #2196f3; }
+
+    /* 中央エリア（地図＋チャット） */
+    .center-panel {
+      display: flex;
+      flex-direction: column;
+      background: #1a1a2e;
+    }
+
+    /* 地図エリア */
+    .map-container {
+      height: 45%;
+      background: #0d1b2a;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .map-placeholder {
+      text-align: center;
+      color: #666;
+    }
+
+    .map-placeholder .icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+    }
+
+    .location-marker {
+      position: absolute;
+      background: #d32f2f;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      box-shadow: 0 4px 12px rgba(211, 47, 47, 0.5);
+    }
+
+    .location-marker::after {
+      content: '';
+      position: absolute;
+      bottom: -8px;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 8px solid #d32f2f;
+    }
+
+    /* チャットエリア */
+    .chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid #0f3460;
+    }
+
+    .chat-header {
+      padding: 12px 16px;
+      background: #0f3460;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chat-header h3 {
+      font-size: 16px;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: #16213e;
+    }
+
+    .message {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .message.received {
+      background: #1f4068;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.sent {
+      background: #d32f2f;
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message .meta {
+      font-size: 11px;
+      color: #888;
+      margin-top: 6px;
+    }
+
+    .message.sent .meta {
+      color: rgba(255,255,255,0.7);
+    }
+
+    .chat-input-area {
+      padding: 12px;
+      background: #0f3460;
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input-area input {
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 15px;
+      border: none;
+      border-radius: 8px;
+      background: #16213e;
+      color: #fff;
+    }
+
+    .chat-input-area input::placeholder {
+      color: #666;
+    }
+
+    .chat-input-area button {
+      padding: 12px 24px;
+      background: #d32f2f;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .chat-input-area button:hover {
+      background: #b71c1c;
+    }
+
+    /* 定型文 */
+    .quick-replies {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #0a1628;
+      overflow-x: auto;
+    }
+
+    .quick-reply {
+      flex-shrink: 0;
+      padding: 8px 14px;
+      background: #1f4068;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .quick-reply:hover {
+      background: #2d5a8a;
+    }
+
+    /* 詳細パネル */
+    .detail-panel {
+      background: #16213e;
+      border-left: 1px solid #0f3460;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .detail-header {
+      padding: 16px;
+      background: #0f3460;
+    }
+
+    .detail-header h2 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .detail-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .detail-section {
+      margin-bottom: 24px;
+    }
+
+    .detail-section h4 {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .detail-section p {
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .info-item {
+      background: #0f3460;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .info-item .label {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 4px;
+    }
+
+    .info-item .value {
+      font-size: 15px;
+      font-weight: bold;
+    }
+
+    /* アクションボタン */
+    .action-buttons {
+      padding: 16px;
+      background: #0f3460;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .action-btn {
+      padding: 16px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .action-btn.dispatch {
+      background: #4caf50;
+      color: white;
+    }
+
+    .action-btn.dispatch:hover {
+      background: #388e3c;
+    }
+
+    .action-btn.cancel {
+      background: #666;
+      color: white;
+    }
+
+    .action-btn.cancel:hover {
+      background: #555;
+    }
+
+    /* 通報なしメッセージ */
+    .no-incident {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #666;
+    }
+
+    .no-incident .icon {
+      font-size: 80px;
+      margin-bottom: 24px;
+    }
+
+    .no-incident p {
+      font-size: 18px;
+    }
+
+    /* 新着通報アラート */
+    .new-alert {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #d32f2f;
+      color: white;
+      padding: 16px 32px;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: bold;
+      box-shadow: 0 8px 24px rgba(211, 47, 47, 0.5);
+      animation: alertPulse 0.5s infinite;
+      z-index: 1000;
+      display: none;
+    }
+
+    .new-alert.show {
+      display: block;
+    }
+
+    @keyframes alertPulse {
+      0%, 100% { transform: translateX(-50%) scale(1); }
+      50% { transform: translateX(-50%) scale(1.05); }
+    }
+
+    /* スクロールバー */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0f3460;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #1f4068;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #2d5a8a;
+    }
+  </style>
+</head>
+<body>
+  <!-- 新着通報アラート -->
+  <div class="new-alert" id="new-alert">
+    🚨 新規通報が入りました
+  </div>
+
+  <!-- ヘッダー -->
+  <header class="header">
+    <h1>NET119 指令台</h1>
+    <div class="header-status">
+      <div class="connection-badge" id="connection-badge">
+        <span class="dot"></span>
+        <span id="connection-text">接続中</span>
+      </div>
+      <div class="datetime" id="datetime"></div>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <div class="main-container">
+    <!-- 通報一覧 -->
+    <aside class="incidents-panel">
+      <div class="panel-header">
+        <span>通報一覧</span>
+        <span class="badge" id="incident-count">0</span>
+      </div>
+      <div class="incidents-list" id="incidents-list">
+        <!-- 動的に追加 -->
+      </div>
+    </aside>
+
+    <!-- 中央パネル -->
+    <main class="center-panel" id="center-panel">
+      <div class="no-incident" id="no-incident">
+        <div class="icon">📋</div>
+        <p>通報を選択してください</p>
+      </div>
+
+      <!-- 地図エリア（選択時表示） -->
+      <div class="map-container" id="map-container" style="display: none;">
+        <div class="map-placeholder">
+          <div class="icon">🗺️</div>
+          <p>地図表示エリア</p>
+          <p style="font-size: 12px; margin-top: 8px;">（Google Maps API連携で実装可能）</p>
+        </div>
+        <div class="location-marker" id="location-marker" style="display: none;">
+          通報者位置
+        </div>
+      </div>
+
+      <!-- チャットエリア（選択時表示） -->
+      <div class="chat-panel" id="chat-panel" style="display: none;">
+        <div class="chat-header">
+          <h3>通報者とのチャット</h3>
+          <span class="incident-status waiting" id="chat-status">対応中</span>
+        </div>
+        <div class="quick-replies">
+          <div class="quick-reply" onclick="sendQuickReply('状況を詳しく教えてください')">状況を詳しく教えてください</div>
+          <div class="quick-reply" onclick="sendQuickReply('けが人はいますか？')">けが人はいますか？</div>
+          <div class="quick-reply" onclick="sendQuickReply('そのまま待っていてください')">そのまま待っていてください</div>
+          <div class="quick-reply" onclick="sendQuickReply('救急車を向かわせます')">救急車を向かわせます</div>
+          <div class="quick-reply" onclick="sendQuickReply('消防車を向かわせます')">消防車を向かわせます</div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input-area">
+          <input type="text" id="chat-input" placeholder="メッセージを入力...">
+          <button onclick="sendMessage()">送信</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- 詳細パネル -->
+    <aside class="detail-panel" id="detail-panel">
+      <div class="detail-header">
+        <h2 id="detail-title">通報詳細</h2>
+      </div>
+      <div class="detail-content" id="detail-content">
+        <div class="no-incident">
+          <div class="icon">📋</div>
+          <p>通報を選択してください</p>
+        </div>
+      </div>
+      <div class="action-buttons" id="action-buttons" style="display: none;">
+        <button class="action-btn dispatch" onclick="dispatchUnits()">
+          🚒 出動指令
+        </button>
+        <button class="action-btn cancel" onclick="closeIncident()">
+          ✕ 対応終了
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- サウンド -->
+  <audio id="alert-sound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp6ck4d1Z2N3kaSxqZyOgHBmZ3eOo62ml4p8bmNofZSnr6WYi31wZml8kqOtp5iLfnBnaHyUpa6omIx+cGZofJOkramZi35xZ2h8k6SuqpmLfnFnaHyTpK2pmYt+cWdofJOkramZi35xZ2h8k6StqZmLfnFnZ3yTpK2pmYt+cWdofJOkramZi35xZ2h8k6StqZmLfnFnaHyTpK2pmYt+cQ==" type="audio/wav">
+  </audio>
+
+  <script>
+    // 状態管理
+    let ws = null;
+    let incidents = new Map();
+    let selectedIncidentId = null;
+
+    // 初期化
+    window.onload = function() {
+      updateDateTime();
+      setInterval(updateDateTime, 1000);
+      connectWebSocket();
+    };
+
+    // 日時更新
+    function updateDateTime() {
+      const now = new Date();
+      document.getElementById('datetime').textContent =
+        now.toLocaleString('ja-JP', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+    }
+
+    // WebSocket接続
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${location.host}/ws/dispatcher`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        updateConnectionStatus(true);
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        console.log('Received:', msg);
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed');
+        updateConnectionStatus(false);
+        setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+      };
+    }
+
+    function updateConnectionStatus(connected) {
+      const badge = document.getElementById('connection-badge');
+      const text = document.getElementById('connection-text');
+      if (connected) {
+        badge.classList.remove('disconnected');
+        text.textContent = '接続中';
+      } else {
+        badge.classList.add('disconnected');
+        text.textContent = '切断';
+      }
+    }
+
+    // メッセージ処理
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'CONNECTED':
+          console.log('Dispatcher connected:', msg);
+          break;
+
+        case 'INCIDENT':
+        case 'REQUEST':
+          // 新規通報
+          addIncident(msg);
+          break;
+
+        case 'MESSAGE':
+          // チャットメッセージ
+          if (msg.incidentId === selectedIncidentId) {
+            addChatMessage(msg.content, 'received', msg.timestamp);
+          }
+          // 通報データにもメッセージ追加
+          const incident = incidents.get(msg.incidentId);
+          if (incident) {
+            if (!incident.messages) incident.messages = [];
+            incident.messages.push({ content: msg.content, type: 'received', timestamp: msg.timestamp });
+          }
+          break;
+
+        case 'CLOSED':
+          // 通報終了
+          incidents.delete(msg.incidentId);
+          renderIncidentsList();
+          if (msg.incidentId === selectedIncidentId) {
+            clearSelection();
+          }
+          break;
+      }
+    }
+
+    // 通報追加
+    function addIncident(data) {
+      const id = data.messageId || data.incidentId || 'INC-' + Date.now();
+
+      const incident = {
+        id,
+        type: data.emergencyType || data.content?.type || 'RESCUE',
+        caller: data.caller || {},
+        location: data.location || {},
+        content: data.content || {},
+        timestamp: data.timestamp || new Date().toISOString(),
+        status: 'waiting',
+        messages: [{
+          content: data.content?.description || '緊急通報',
+          type: 'received',
+          timestamp: data.timestamp
+        }],
+        isNew: true
+      };
+
+      incidents.set(id, incident);
+      renderIncidentsList();
+
+      // アラート表示
+      showNewAlert();
+      playAlertSound();
+
+      // 3秒後にnewフラグ解除
+      setTimeout(() => {
+        incident.isNew = false;
+        renderIncidentsList();
+      }, 3000);
+
+      // 自動で選択
+      selectIncident(id);
+
+      // サーバーに受付完了を送信
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'ACCEPTED',
+          incidentId: id,
+          timestamp: new Date().toISOString()
+        }));
+      }
+    }
+
+    // 通報一覧表示
+    function renderIncidentsList() {
+      const list = document.getElementById('incidents-list');
+      const count = document.getElementById('incident-count');
+      count.textContent = incidents.size;
+
+      if (incidents.size === 0) {
+        list.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: #666;">
+            <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+            <p>現在通報はありません</p>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = Array.from(incidents.values())
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .map(inc => `
+          <div class="incident-card ${inc.id === selectedIncidentId ? 'active' : ''} ${inc.isNew ? 'new' : ''}"
+               onclick="selectIncident('${inc.id}')">
+            <div class="incident-type ${inc.type === 'FIRE' ? 'fire' : 'rescue'}">
+              ${inc.type === 'FIRE' ? '🔥 火災' : '🚑 救急'}
+            </div>
+            <div class="incident-name">${inc.caller.name || '通報者'}</div>
+            <div class="incident-address">${formatLocation(inc.location)}</div>
+            <div class="incident-time">
+              ${formatTime(inc.timestamp)}
+              <span class="incident-status ${inc.status}">${getStatusLabel(inc.status)}</span>
+            </div>
+          </div>
+        `).join('');
+    }
+
+    // 通報選択
+    function selectIncident(id) {
+      selectedIncidentId = id;
+      const incident = incidents.get(id);
+      if (!incident) return;
+
+      // ステータス更新
+      incident.status = 'responding';
+
+      renderIncidentsList();
+      renderIncidentDetail(incident);
+      renderChat(incident);
+
+      // UI表示
+      document.getElementById('no-incident').style.display = 'none';
+      document.getElementById('map-container').style.display = 'flex';
+      document.getElementById('chat-panel').style.display = 'flex';
+      document.getElementById('action-buttons').style.display = 'flex';
+
+      // 位置マーカー
+      if (incident.location && incident.location.latitude) {
+        const marker = document.getElementById('location-marker');
+        marker.style.display = 'block';
+        marker.textContent = `📍 ${formatLocation(incident.location)}`;
+      }
+    }
+
+    // 詳細表示
+    function renderIncidentDetail(incident) {
+      const content = document.getElementById('detail-content');
+      document.getElementById('detail-title').textContent =
+        `${incident.type === 'FIRE' ? '🔥 火災' : '🚑 救急'} 通報詳細`;
+
+      content.innerHTML = `
+        <div class="detail-section">
+          <h4>通報者情報</h4>
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="label">氏名</div>
+              <div class="value">${incident.caller.name || '不明'}</div>
+            </div>
+            <div class="info-item">
+              <div class="label">障害種別</div>
+              <div class="value">${getDisabilityLabel(incident.caller.disabilityType)}</div>
+            </div>
+            <div class="info-item">
+              <div class="label">電話番号</div>
+              <div class="value">${incident.caller.phoneNumber || '未登録'}</div>
+            </div>
+            <div class="info-item">
+              <div class="label">登録ID</div>
+              <div class="value">${incident.caller.registrationId || '-'}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>位置情報</h4>
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="label">緯度</div>
+              <div class="value">${incident.location?.latitude?.toFixed(6) || '不明'}</div>
+            </div>
+            <div class="info-item">
+              <div class="label">経度</div>
+              <div class="value">${incident.location?.longitude?.toFixed(6) || '不明'}</div>
+            </div>
+          </div>
+          <div class="info-item" style="margin-top: 12px;">
+            <div class="label">住所</div>
+            <div class="value">${incident.caller.address || incident.location?.address || '位置情報から特定中...'}</div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>通報内容</h4>
+          <p>${incident.content?.description || '詳細不明'}</p>
+        </div>
+
+        <div class="detail-section">
+          <h4>通報時刻</h4>
+          <p>${new Date(incident.timestamp).toLocaleString('ja-JP')}</p>
+        </div>
+      `;
+    }
+
+    // チャット表示
+    function renderChat(incident) {
+      const messages = document.getElementById('chat-messages');
+      messages.innerHTML = '';
+
+      (incident.messages || []).forEach(msg => {
+        addChatMessage(msg.content, msg.type, msg.timestamp, false);
+      });
+
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    // チャットメッセージ追加
+    function addChatMessage(content, type, timestamp, scroll = true) {
+      const messages = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = `message ${type}`;
+      div.innerHTML = `
+        ${content}
+        <div class="meta">${formatTime(timestamp)}</div>
+      `;
+      messages.appendChild(div);
+      if (scroll) {
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    // メッセージ送信
+    function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text || !selectedIncidentId) return;
+
+      const timestamp = new Date().toISOString();
+      addChatMessage(text, 'sent', timestamp);
+
+      // 通報データにも追加
+      const incident = incidents.get(selectedIncidentId);
+      if (incident) {
+        if (!incident.messages) incident.messages = [];
+        incident.messages.push({ content: text, type: 'sent', timestamp });
+      }
+
+      // WebSocket送信
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'MESSAGE',
+          incidentId: selectedIncidentId,
+          content: text,
+          timestamp
+        }));
+      }
+
+      input.value = '';
+    }
+
+    function sendQuickReply(text) {
+      document.getElementById('chat-input').value = text;
+      sendMessage();
+    }
+
+    // 出動指令
+    function dispatchUnits() {
+      if (!selectedIncidentId) return;
+
+      const incident = incidents.get(selectedIncidentId);
+      if (!incident) return;
+
+      incident.status = 'dispatched';
+      renderIncidentsList();
+
+      addChatMessage('🚒 出動指令を発令しました。救急車/消防車が向かっています。', 'sent', new Date().toISOString());
+
+      // WebSocket送信
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'DISPATCH',
+          incidentId: selectedIncidentId,
+          timestamp: new Date().toISOString()
+        }));
+      }
+
+      alert('出動指令を発令しました');
+    }
+
+    // 対応終了
+    function closeIncident() {
+      if (!selectedIncidentId) return;
+      if (!confirm('この通報の対応を終了しますか？')) return;
+
+      // WebSocket送信
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'CLOSE',
+          incidentId: selectedIncidentId,
+          timestamp: new Date().toISOString()
+        }));
+      }
+
+      incidents.delete(selectedIncidentId);
+      renderIncidentsList();
+      clearSelection();
+    }
+
+    function clearSelection() {
+      selectedIncidentId = null;
+      document.getElementById('no-incident').style.display = 'flex';
+      document.getElementById('map-container').style.display = 'none';
+      document.getElementById('chat-panel').style.display = 'none';
+      document.getElementById('action-buttons').style.display = 'none';
+      document.getElementById('detail-content').innerHTML = `
+        <div class="no-incident">
+          <div class="icon">📋</div>
+          <p>通報を選択してください</p>
+        </div>
+      `;
+    }
+
+    // アラート
+    function showNewAlert() {
+      const alert = document.getElementById('new-alert');
+      alert.classList.add('show');
+      setTimeout(() => alert.classList.remove('show'), 3000);
+    }
+
+    function playAlertSound() {
+      try {
+        document.getElementById('alert-sound').play();
+      } catch (e) {
+        console.log('Audio play failed:', e);
+      }
+    }
+
+    // ユーティリティ
+    function formatLocation(loc) {
+      if (!loc) return '位置情報なし';
+      if (loc.address) return loc.address;
+      if (loc.latitude && loc.longitude) {
+        return `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
+      }
+      return '位置情報なし';
+    }
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      return new Date(timestamp).toLocaleTimeString('ja-JP', {
+        hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function getStatusLabel(status) {
+      const labels = { waiting: '待機中', responding: '対応中', dispatched: '出動済' };
+      return labels[status] || status;
+    }
+
+    function getDisabilityLabel(type) {
+      const labels = {
+        'HEARING': '聴覚障害',
+        'SPEECH': '言語障害',
+        'BOTH': '聴覚・言語障害',
+        'OTHER': 'その他'
+      };
+      return labels[type] || type || '不明';
+    }
+
+    // Enterキーで送信
+    document.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && document.activeElement.id === 'chat-input') {
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>

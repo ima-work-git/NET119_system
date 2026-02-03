@@ -6,10 +6,12 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:web": "node dist/web-server.js",
     "start:caller": "node dist/caller-gateway.js",
     "start:callee": "node dist/callee-gateway.js",
     "start:broker": "node dist/stomp-broker.js",
     "dev": "ts-node src/index.ts",
+    "dev:web": "ts-node src/web-server.ts",
     "dev:caller": "ts-node src/caller-gateway.ts",
     "dev:callee": "ts-node src/callee-gateway.ts",
     "dev:broker": "ts-node src/stomp-broker.ts",
