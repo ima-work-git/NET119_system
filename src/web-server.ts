@@ -44,7 +44,7 @@ interface Incident {
   location: unknown;
   content: unknown;
   timestamp: string;
-  status: 'waiting' | 'responding' | 'dispatched' | 'closed';
+  status: 'waiting' | 'responding' | 'dispatched' | 'closed' | 'transferred';
   messages: Array<{ from: string; content: string; timestamp: string }>;
 }
 
@@ -58,6 +58,16 @@ let stompSocket: tls.TLSSocket | null = null;
 let stompBuffer = Buffer.alloc(0);
 let stompSubId: string | null = null;
 let stompReconnectAttempts = 0;
+
+// 他本部一覧（実際にはconfigまたはDBから取得）
+const HEADQUARTERS: Record<string, { name: string; host: string; port: number }> = {
+  kawasaki: { name: '川崎市消防局', host: '18.177.238.97', port: 61614 },
+  yokohama: { name: '横浜市消防局', host: 'YOKOHAMA_EC2_IP', port: 61614 },
+  tokyo: { name: '東京消防庁', host: '127.0.0.1', port: 61614 },
+};
+
+// 他本部へのSTOMP接続管理
+const externalStompConnections = new Map<string, tls.TLSSocket>();
 
 // MIMEタイプ
 const mimeTypes: Record<string, string> = {
@@ -392,6 +402,60 @@ function handleDispatcherMessage(dispatcher: DispatcherConnection, msg: {
       }
       break;
     }
+
+    case 'TRANSFER': {
+      // 他本部への転送
+      const transferMsg = msg as {
+        type: string;
+        incidentId: string;
+        targetCode: string;
+        targetName: string;
+        reason: string;
+        incident: unknown;
+        timestamp: string;
+      };
+
+      if (incident && transferMsg.targetCode) {
+        logger.info('Transfer requested', {
+          incidentId: incident.id,
+          targetCode: transferMsg.targetCode,
+          reason: transferMsg.reason,
+        });
+
+        // STOMP経由で他本部に転送
+        sendTransferToExternalHQ(transferMsg.targetCode, {
+          messageType: 'TRANSFER_REQUEST',
+          messageId: incident.id,
+          fromOperator: OPERATOR_CODE,
+          fromOperatorName: HEADQUARTERS[OPERATOR_CODE]?.name || OPERATOR_CODE,
+          timestamp: transferMsg.timestamp,
+          reason: transferMsg.reason,
+          payload: {
+            incidentId: incident.id,
+            type: incident.type,
+            caller: incident.caller,
+            location: incident.location,
+            content: incident.content,
+            originalTimestamp: incident.timestamp,
+            messages: incident.messages,
+          },
+        });
+
+        // ステータス更新
+        incident.status = 'transferred';
+
+        // 転送元指令員に完了通知
+        dispatcher.ws.send(JSON.stringify({
+          type: 'TRANSFER_COMPLETE',
+          incidentId: incident.id,
+          targetName: transferMsg.targetName,
+          timestamp: transferMsg.timestamp,
+        }));
+
+        logger.info('Transfer sent', { incidentId: incident.id, target: transferMsg.targetCode });
+      }
+      break;
+    }
   }
 }
 
@@ -464,7 +528,13 @@ function handleStompFrame(frame: StompFrameInfo) {
       const msg = JSON.parse(frame.body);
       logger.info('STOMP message received', { type: msg.messageType });
 
-      // 指令員にブロードキャスト
+      // 転送リクエストの場合
+      if (msg.messageType === 'TRANSFER_REQUEST') {
+        handleTransferRequest(msg);
+        return;
+      }
+
+      // 通常の通報
       broadcastToDispatchers({
         type: 'INCIDENT',
         incidentId: msg.messageId,
@@ -479,6 +549,150 @@ function handleStompFrame(frame: StompFrameInfo) {
     } catch (e) {
       logger.error('Failed to parse STOMP message', { error: (e as Error).message });
     }
+  }
+}
+
+// 転送リクエストを受信した場合の処理
+function handleTransferRequest(msg: {
+  messageId: string;
+  fromOperator: string;
+  fromOperatorName: string;
+  timestamp: string;
+  reason: string;
+  payload: {
+    incidentId: string;
+    type: string;
+    caller: unknown;
+    location: unknown;
+    content: unknown;
+    originalTimestamp: string;
+    messages: Array<{ from: string; content: string; timestamp: string }>;
+  };
+}) {
+  logger.info('Transfer request received', {
+    incidentId: msg.messageId,
+    from: msg.fromOperator,
+  });
+
+  // 新しいインシデントとして登録
+  const incident: Incident = {
+    id: msg.messageId,
+    citizenId: `transferred-${msg.fromOperator}`,
+    type: msg.payload.type,
+    caller: msg.payload.caller,
+    location: msg.payload.location,
+    content: msg.payload.content,
+    timestamp: msg.timestamp,
+    status: 'waiting',
+    messages: msg.payload.messages || [],
+  };
+
+  incidents.set(incident.id, incident);
+
+  // 指令員にブロードキャスト（転送として表示）
+  broadcastToDispatchers({
+    type: 'TRANSFERRED',
+    incidentId: incident.id,
+    messageId: incident.id,
+    emergencyType: incident.type,
+    caller: incident.caller,
+    location: incident.location,
+    content: incident.content,
+    timestamp: incident.timestamp,
+    transferredFrom: msg.fromOperatorName,
+    reason: msg.reason,
+  });
+
+  logger.info('Transfer accepted', { incidentId: incident.id });
+}
+
+// 他本部へ転送送信
+function sendTransferToExternalHQ(targetCode: string, message: unknown) {
+  const target = HEADQUARTERS[targetCode];
+  if (!target) {
+    logger.error('Unknown target HQ', { targetCode });
+    return;
+  }
+
+  // 既存の接続を使用するか、新規接続
+  let socket = externalStompConnections.get(targetCode);
+
+  if (!socket || socket.destroyed) {
+    logger.info('Connecting to external HQ', { targetCode, host: target.host, port: target.port });
+
+    socket = tls.connect({
+      host: target.host,
+      port: target.port,
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: false,
+    }, () => {
+      // STOMP CONNECT
+      const connectFrame = serializeStompFrame({
+        command: 'CONNECT',
+        headers: {
+          'accept-version': '1.2',
+          'host': target.host,
+          'heart-beat': '0,0',
+        },
+      });
+      socket!.write(connectFrame);
+    });
+
+    let buffer = Buffer.alloc(0);
+    let connected = false;
+
+    socket.on('data', (data: Buffer) => {
+      buffer = Buffer.concat([buffer, data]);
+      let idx;
+      while ((idx = buffer.indexOf(0)) >= 0) {
+        const frameData = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        if (frameData.length > 1) {
+          const frame = parseStompFrame(frameData);
+          if (frame?.command === 'CONNECTED' && !connected) {
+            connected = true;
+            logger.info('External HQ connected', { targetCode });
+
+            // 転送メッセージを送信
+            const dest = createQueueName(targetCode, 'callee');
+            const sendFrame = serializeStompFrame({
+              command: 'SEND',
+              headers: {
+                destination: dest,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify(message),
+            });
+            socket!.write(sendFrame);
+            logger.info('Transfer message sent', { targetCode, dest });
+          }
+        }
+      }
+    });
+
+    socket.on('error', (err) => {
+      logger.error('External HQ connection error', { targetCode, error: err.message });
+    });
+
+    socket.on('close', () => {
+      externalStompConnections.delete(targetCode);
+      logger.info('External HQ connection closed', { targetCode });
+    });
+
+    externalStompConnections.set(targetCode, socket);
+  } else {
+    // 既存接続で送信
+    const dest = createQueueName(targetCode, 'callee');
+    const sendFrame = serializeStompFrame({
+      command: 'SEND',
+      headers: {
+        destination: dest,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+    socket.write(sendFrame);
+    logger.info('Transfer message sent via existing connection', { targetCode, dest });
   }
 }
 

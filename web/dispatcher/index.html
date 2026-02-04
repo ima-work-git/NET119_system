@@ -455,7 +455,7 @@
   </div>
 
   <header class="header">
-    <h1>NET119 指令台</h1>
+    <h1 id="header-title">NET119 指令台</h1>
     <div class="header-status">
       <div class="connection-badge" id="connection-badge">
         <span class="dot"></span>
@@ -537,10 +537,15 @@
     let marker = null;
     let selectedTransferHQ = null;
 
-    // 連携消防本部一覧（実際にはサーバーから取得）
-    const headquarters = [
-      { code: 'tokyo', name: '東京消防庁', region: '東京都' },
+    // 連携消防本部一覧
+    // URLパラメータから自本部を取得
+    const urlParams = new URLSearchParams(window.location.search);
+    const myHQ = urlParams.get('hq') || 'kawasaki';
+
+    const allHeadquarters = [
+      { code: 'kawasaki', name: '川崎市消防局', region: '神奈川県' },
       { code: 'yokohama', name: '横浜市消防局', region: '神奈川県' },
+      { code: 'tokyo', name: '東京消防庁', region: '東京都' },
       { code: 'osaka', name: '大阪市消防局', region: '大阪府' },
       { code: 'nagoya', name: '名古屋市消防局', region: '愛知県' },
       { code: 'sapporo', name: '札幌市消防局', region: '北海道' },
@@ -549,6 +554,10 @@
       { code: 'kyoto', name: '京都市消防局', region: '京都府' },
     ];
 
+    // 転送先リストから自本部を除外
+    const headquarters = allHeadquarters.filter(h => h.code !== myHQ);
+    const myHQInfo = allHeadquarters.find(h => h.code === myHQ);
+
     // 初期化
     window.onload = function() {
       updateDateTime();
@@ -556,6 +565,11 @@
       initMap();
       connectWebSocket();
       renderHQList();
+
+      // ヘッダーに自本部名を表示
+      if (myHQInfo) {
+        document.getElementById('header-title').textContent = `NET119 指令台 - ${myHQInfo.name}`;
+      }
     };
 
     // 地図初期化

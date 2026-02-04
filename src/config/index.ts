@@ -102,16 +102,32 @@ function loadOperators(): OperatorId[] {
     }
   }
 
-  // デフォルト（開発用）
+  // デフォルト設定（川崎・横浜消防局）
+  // 本番環境では OPERATORS_CONFIG 環境変数で設定
   return [
+    {
+      code: 'kawasaki',
+      name: '川崎市消防局',
+      allowedIPs: [
+        '127.0.0.1',
+        '18.177.238.97',              // 川崎EC2
+        '10.0.0.0/8',
+        '192.168.0.0/16',
+      ],
+    },
+    {
+      code: 'yokohama',
+      name: '横浜市消防局',
+      allowedIPs: [
+        '127.0.0.1',
+        'YOKOHAMA_EC2_IP',            // ← 横浜EC2のElastic IPに置換
+        '10.0.0.0/8',
+        '192.168.0.0/16',
+      ],
+    },
     {
       code: 'tokyo',
       name: '東京消防庁',
-      allowedIPs: ['127.0.0.1', '10.0.0.0/8', '192.168.0.0/16'],
-    },
-    {
-      code: 'osaka',
-      name: '大阪市消防局',
       allowedIPs: ['127.0.0.1', '10.0.0.0/8', '192.168.0.0/16'],
     },
   ];
